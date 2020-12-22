@@ -1,0 +1,20 @@
+FROM python:3.9-slim-buster as build_stage
+
+#mysqlclientの動作に必要なパッケージを入れる
+RUN apt update \
+  && apt-get install -y libmariadb-dev-compat gcc 
+
+COPY requirements.txt /
+
+RUN pip install -r /requirements.txt 
+
+FROM python:3.9-slim-buster as run_stage
+
+COPY --from=build_stage /usr/lib/x86_64-linux-gnu/libmariadb.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=build_stage /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=build_stage /usr/local/bin/coverage /usr/local/bin/coverage
+COPY --from=build_stage /usr/local/bin/django-admin /usr/local/bin/django-admin
+COPY --from=build_stage /usr/local/bin/gunicorn /usr/local/bin/gunicorn
+COPY ./sample-project /usr/src/app/sample-project
+
+WORKDIR /usr/src/app/sample-project

@@ -1,0 +1,28 @@
+version: '3.4'
+services:
+  db:
+    image: mariadb:10.0.19
+    restart: always
+    ports:
+    - "3306:3306"
+    volumes:
+    - ./local-db/my.cnf:/etc/mysql/conf.d/my.cnf
+    environment:
+      MYSQL_ROOT_PASSWORD: 5sfdfs44f53
+      MYSQL_DATABASE: local_db
+      MYSQL_USER: back_user
+      MYSQL_PASSWORD: e54fsf523
+
+  app:
+   tty: True
+   build:
+    context: ./
+    dockerfile: BackDockerfile_dev
+   environment:
+    CONOHA_API_USER: ${CONOHA_API_USER}
+    CONOHA_TENANT_ID: ${CONOHA_TENANT_ID}
+    CONOHA_API_PASSWORD: ${CONOHA_API_PASSWORD}
+    SENTRY_DSN: ${SENTRY_DSN}
+    SENTRY_ENVIRONMENT: development
+   depends_on:
+    - db

@@ -1,0 +1,5 @@
+[run]
+omit = */tests/*,*/management/*,*__init__*,*/core/*,*urls*,*/migrations/*,*manage*,*admin*,*apps*
+
+[html]
+directory = coverage

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link
+      href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/@mdi/font@4.x/css/materialdesignicons.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css"
+      rel="stylesheet"
+    />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <v-app>
+        <v-main>
+          <v-card elevation="0" max-width="800" class="mx-auto">
+            <v-carousel hide-delimiters>
+              <v-carousel-item v-for="(v, i) in items" :key="i">
+                <v-system-bar class="blue-grey darken-4--text">
+                  【画像名称】{{v.image_origin_name}}.{{v.image_extension}}
+                  【画像サイズ】{{to_kb_rounded(v.image_size)}}KB<v-spacer
+                  ></v-spacer>
+                  【投稿日時】{{v.reg_datetime}}
+                </v-system-bar>
+                <v-sheet color="rgba(0, 0, 0, 0.0)" height="100%" tile>
+                  <v-row class="fill-height" align="center" justify="center">
+                    <v-img :src="v.image_url" contain aspect-ratio="2">
+                      <template v-slot:placeholder>
+                        <v-row
+                          class="fill-height ma-0"
+                          align="center"
+                          justify="center"
+                        >
+                          <v-progress-circular
+                            indeterminate
+                            color="grey lighten-5"
+                          ></v-progress-circular>
+                        </v-row>
+                      </template>
+                    </v-img>
+                  </v-row>
+                </v-sheet>
+              </v-carousel-item>
+            </v-carousel>
+
+            <v-form ref="post_iamge">
+              <v-container>
+                <v-row fluid>
+                  <v-col cols="12" md="4">
+                    <v-avatar class="ml-8" size="180" tile>
+                      <v-img
+                        :src="post_iamge.image_content ? post_iamge.image_content :no_image"
+                      />
+                    </v-avatar>
+                  </v-col>
+
+                  <v-col cols="12" md="8">
+                    <v-file-input
+                      ref="upload_image"
+                      class="default-placeholer-color"
+                      placeholder="例)image.jpg"
+                      show-size
+                      accept="image/png, image/jpeg, image/jpg"
+                      @change="createImage($event)"
+                      @click:clear="clearImage()"
+                      dense
+                      label="投稿画像を選択してください"
+                      required
+                    ></v-file-input>
+                    <v-btn
+                      @click="post_image()"
+                      color="green darken-1"
+                      block　tile
+                      :disabled="!post_iamge.image_content"
+                    >
+                      <span class="white--text">送信する</span>
+                    </v-btn>
+                  </v-col>
+                </v-row>
+              </v-container>
+            </v-form>
+          </v-card>
+
+          <v-snackbar
+            v-model="snackbar.is_show"
+            :timeout="1500"
+            :color="snackbar.is_err ? 'error' : 'success'"
+          >
+            {{ snackbar.text }}
+            <template v-slot:action="{ attrs }">
+              <v-btn
+                class="white--text"
+                text
+                v-bind="attrs"
+                @click="snackbar.is_show = false"
+              >
+                閉じる
+              </v-btn>
+            </template>
+          </v-snackbar>
+        </v-main>
+      </v-app>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+    <script>
+      const base_api = axios.create({
+        baseURL: "/api/v1/",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      new Vue({
+        el: "#app",
+        vuetify: new Vuetify(),
+        mounted: function () {
+          this.get_imageList();
+        },
+        data: {
+          snackbar: { is_show: false, text: null, is_err: false },
+          post_iamge: { image_content: null, image_origin_name: null },
+          items: [],
+        },
+        computed: {
+          to_kb_rounded: () => (value) =>
+            Math.floor((value / 1024) * Math.pow(10, 2)) / Math.pow(10, 2),
+          no_image: () => "/no_image.png",
+        },
+        methods: {
+          get_imageList() {
+            base_api({
+              method: "GET",
+              url: "post_image",
+            }).then((res) => {
+              this.items = res.data;
+            });
+          },
+          clearImage() {
+            this.$refs.post_iamge.reset();
+            this.post_iamge = { image_content: null, image_origin_name: null };
+          },
+          createImage(file) {
+            const file_pattern = /(.*)(?:\.([^.]+$))/;
+            if (!file) {
+              return;
+            }
+            let reader = new FileReader();
+
+            this.post_iamge.image_origin_name = file.name.match(
+              file_pattern
+            )[1];
+
+            reader.onload = (res) => {
+              this.post_iamge.image_content = res.target.result;
+            };
+
+            reader.readAsDataURL(file);
+          },
+          post_image() {
+            base_api({
+              method: "POST",
+              url: "post_image",
+              data: this.post_iamge,
+            })
+              .then((res) => {
+                this.snackbar.text = `${res.status}:画像のアップロードに成功しました`;
+                this.snackbar.is_show = true;
+                this.snackbar.is_err = false;
+                this.get_imageList();
+                this.clearImage();
+              })
+              .catch((err) => {
+                const err_msg =Object.values(err.response.data);
+                  
+                this.snackbar.text = `${err.response.status}:${err_msg}`;
+                this.snackbar.is_show = true;
+                this.snackbar.is_err = true;
+              });
+          },
+        },
+      });
+    </script>
+  </body>
+</html>

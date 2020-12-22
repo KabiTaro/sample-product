@@ -1,0 +1,9 @@
+__pycache__
+.devcontainer
+.vscode
+coverage
+memo.txt
+.coverage
+.env
+.DS_Store
+ssh
