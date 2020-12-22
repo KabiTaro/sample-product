@@ -1,0 +1,149 @@
+name: CI-CD
+on:
+  push:
+    branches:
+      - "main"
+env:
+  DOCKER_IMAGE_CONTAINER : docker_image_container
+  CONOHA_REGISTORY: localhost:5000
+  CONOHA_REPOSITORY : backend-app
+jobs:
+  CI:
+    runs-on: ubuntu-20.04
+    steps:      
+      - uses: FranzDiebold/github-env-vars-action@v1.2.1
+
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+      
+      #  [CI]① Dockerレジストリコンテナを立ち上げる
+      - name: Docker Registory Run
+        run: |
+          docker run -d -p 5000:5000 --restart=always --name conoha-registry \
+          -e REGISTRY_STORAGE=swift \
+          -e REGISTRY_STORAGE_SWIFT_AUTHURL=https://identity.tyo1.conoha.io/v2.0 \
+          -e REGISTRY_STORAGE_SWIFT_USERNAME=${{ secrets.CONOHA_API_USER }} \
+          -e REGISTRY_STORAGE_SWIFT_PASSWORD=${{ secrets.CONOHA_API_PASSWORD }} \
+          -e REGISTRY_STORAGE_SWIFT_TENANT=${{ secrets.CONOHA_TENANT }} \
+          -e REGISTRY_STORAGE_SWIFT_CONTAINER=${DOCKER_IMAGE_CONTAINER} \
+          registry:2.6.2
+          sleep 10s
+
+      #  [CI]② BackDockerfileで定義したレイヤー構成を基にDockerイメージをビルドする
+      - name: BackEnd-DockerImage Build
+        env:
+            DOCKER_BUILDKIT: 1
+        run: |
+          docker build \
+          --cache-from=${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:latest \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          -f BackDockerfile \
+          -t ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:$GITHUB_SHA_SHORT \
+          -t ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:latest \
+          .
+      
+      #  [CI]③ ビルドしたイメージを基に立ち上げたコンテナでテストとカバレッジ計測とレポートの出力を行う
+      - name: Test Exec & Coverage Output
+        run: |
+          docker run --rm --name test_app \
+          -e CONOHA_API_USER=${{ secrets.CONOHA_API_USER }} \
+          -e CONOHA_TENANT_ID=${{ secrets.CONOHA_TENANT_ID }} \
+          -e CONOHA_API_PASSWORD=${{ secrets.CONOHA_API_PASSWORD }} \
+          -e SENTRY_DSN=${{ secrets.SENTRY_DSN }} \
+          -e SENTRY_ENVIRONMENT=test \
+          ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:latest \
+          bash -c "coverage run --source='.' manage.py test --settings core.test_settings && \
+          coverage report && coverage html && python manage.py upload_coverage"
+      
+      # [CI]④ テストが通った場合はビルドしたイメージをレジストリにPushする
+      - name: DockerRegistory Push
+        run: |
+          docker push ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:$GITHUB_SHA_SHORT
+          docker push ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:latest
+
+  CD:
+      env:
+        DOKER_NETWORK: sample-network
+        APP_CONTAINER_NAME : prd-app-container
+        WEB_CONTAINER_NAME : prd-web-container
+      runs-on: ubuntu-20.04
+      needs: CI
+      steps:
+        - uses: FranzDiebold/github-env-vars-action@v1.2.1
+
+        - name: Checkout Repository
+          uses: actions/checkout@v2
+
+        - name: Envsubst nginx.conf
+          run: |
+            envsubst '${PRODUCTION_IP},${APP_CONTAINER_NAME}'< ./nginx/nginx.conf > ./nginx/nginx_tmp.conf 
+            cp -f ./nginx/nginx_tmp.conf ./nginx/nginx.conf && rm ./nginx/nginx_tmp.conf
+  
+          env:
+            PRODUCTION_IP: ${{ secrets.PRODUCTION_IP }}
+
+        - name: Install SSH key
+          uses: shimataro/ssh-key-action@v2
+          with:
+            key: ${{ secrets.SSH_KEY }}
+            known_hosts: ${{ secrets.KNOWN_HOSTS }}
+
+        # [CD]① デプロイ先のVPSサーバー内のWebコンテナとAppコンテナを停止、削除する
+        - name: Remove-Container
+          run: |
+            ssh ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }} \
+            '
+              for cid in $(docker ps -q -a -f network='${DOKER_NETWORK}');do \
+                  echo ''stop container:''$(docker stop $cid) && echo ''remove container:''$(docker rm $cid); \
+              done;
+            '
+
+        # [CD]② VPSサーバー内でレジストリからCIでPushしたイメージをPullする
+        - name: AppImage-Pull
+          run: |
+            ssh ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }} \
+            "
+            docker pull ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:$GITHUB_SHA_SHORT;
+            "
+
+        # [CD]③ VPSサーバー内でAppコンテナ(DRFアプリ)を立ち上げる
+        - name: AP-Server-Container-Run
+          run: |
+            ssh ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }} \
+            "
+            docker run --name ${APP_CONTAINER_NAME} --network ${DOKER_NETWORK} \
+            -e CONOHA_API_USER=${{ secrets.CONOHA_API_USER }} \
+            -e CONOHA_TENANT_ID=${{ secrets.CONOHA_TENANT_ID }} \
+            -e CONOHA_API_PASSWORD=${{ secrets.CONOHA_API_PASSWORD }} \
+            -e SENTRY_DSN=${{ secrets.SENTRY_DSN }} \
+            -e SENTRY_ENVIRONMENT=production \
+            -e CONOHA_DB_NAME=${{ secrets.CONOHA_DB_NAME }} \
+            -e CONOHA_DB_USER_NAME=${{ secrets.CONOHA_DB_USER_NAME }} \
+            -e CONOHA_DB_PASSWORD=${{ secrets.CONOHA_DB_PASSWORD }} \
+            -e CONOHA_DB_HOST=${{ secrets.CONOHA_DB_HOST }} \
+            -e PRODUCTION_IP=${{ secrets.PRODUCTION_IP }} \
+            -d -p 8000:8000 -it ${CONOHA_REGISTORY}/${CONOHA_REPOSITORY}:$GITHUB_SHA_SHORT \
+            bash -c 'python manage.py migrate && gunicorn core.wsgi -b 0.0.0.0:8000' \
+            "
+
+        # [CD]④ VPSサーバー内でWebコンテナ(Nginx)を立ち上げる
+        - name: Web-Server-Container-Run
+          run: |
+            rsync -acvz --delete ./nginx/* ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }}:/etc/nginx ;
+
+            ssh ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }} \
+            "
+            docker run -d -p 80:80 --restart=always --name ${WEB_CONTAINER_NAME} \
+            --network ${DOKER_NETWORK} \
+            -e TZ=Asia/Tokyo \
+            -v /etc/nginx:/etc/nginx \
+            nginx:1.10.2;
+            "
+
+        # 立ち上がっているコンテナから未参照のイメージを削除する
+        - name: Image-Prune
+          run: |
+            ssh ${{secrets.SSH_USER}}@${{ secrets.PRODUCTION_IP }} \
+            "
+            docker image prune -f -a;
+            "
