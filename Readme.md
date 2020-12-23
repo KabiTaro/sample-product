@@ -1,0 +1,2 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/KabiTaro/sample-product/blob/main/LICENSE.txt)
+[![CI-CD](https://github.com/KabiTaro/Sample-BackEndApp/workflows/CI-CD/badge.svg?branch=main&event=push)](https://github.com/KabiTaro/sample-product/actions?query=workflow%3ACI-CD)
